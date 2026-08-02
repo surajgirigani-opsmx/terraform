@@ -5,7 +5,6 @@ package pg
 
 import (
 	"database/sql"
-	"fmt"
 
 	"github.com/lib/pq"
 	"github.com/zclconf/go-cty/cty"
@@ -115,8 +114,8 @@ func (b *Backend) Configure(configVal cty.Value) tfdiags.Diagnostics {
 		// a user hasn't been granted the `CREATE SCHEMA` privilege
 		if count < 1 {
 			// tries to create the schema
-			query = `CREATE SCHEMA IF NOT EXISTS %s`
-			if _, err := db.Exec(fmt.Sprintf(query, b.schemaName)); err != nil {
+			query = `CREATE SCHEMA IF NOT EXISTS ` + pq.QuoteIdentifier(data.String("schema_name"))
+			if _, err := db.Exec(query); err != nil {
 				return backendbase.ErrorAsDiagnostics(err)
 			}
 		}
@@ -127,19 +126,19 @@ func (b *Backend) Configure(configVal cty.Value) tfdiags.Diagnostics {
 			return backendbase.ErrorAsDiagnostics(err)
 		}
 
-		query = `CREATE TABLE IF NOT EXISTS %s.%s (
+		query = `CREATE TABLE IF NOT EXISTS ` + pq.QuoteIdentifier(data.String("schema_name")) + `.` + pq.QuoteIdentifier(statesTableName) + ` (
 			id bigint NOT NULL DEFAULT nextval('public.global_states_id_seq') PRIMARY KEY,
 			name text UNIQUE,
 			data text
 			)`
-		if _, err := db.Exec(fmt.Sprintf(query, b.schemaName, statesTableName)); err != nil {
+		if _, err := db.Exec(query); err != nil {
 			return backendbase.ErrorAsDiagnostics(err)
 		}
 	}
 
 	if !data.Bool("skip_index_creation") {
-		query = `CREATE UNIQUE INDEX IF NOT EXISTS %s ON %s.%s (name)`
-		if _, err := db.Exec(fmt.Sprintf(query, statesIndexName, b.schemaName, statesTableName)); err != nil {
+		query = `CREATE UNIQUE INDEX IF NOT EXISTS ` + pq.QuoteIdentifier(statesIndexName) + ` ON ` + pq.QuoteIdentifier(data.String("schema_name")) + `.` + pq.QuoteIdentifier(statesTableName) + ` (name)`
+		if _, err := db.Exec(query); err != nil {
 			return backendbase.ErrorAsDiagnostics(err)
 		}
 	}
