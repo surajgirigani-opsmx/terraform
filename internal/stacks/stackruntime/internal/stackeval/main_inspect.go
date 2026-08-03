@@ -79,7 +79,9 @@ func (m *Main) EvalExpr(ctx context.Context, expr hcl.Expression, scopeStackInst
 		}, nil
 	})
 	if err != nil {
-		ret.Diagnostics = ret.Diagnostics.Append(diagnosticsForPromisingTaskError(err))
+		var diags tfdiags.Diagnostics
+		diags = diags.Append(diagnosticsForPromisingTaskError(err))
+		return cty.DynamicVal, diags
 	}
 	return ret.Result, ret.Diagnostics
 }

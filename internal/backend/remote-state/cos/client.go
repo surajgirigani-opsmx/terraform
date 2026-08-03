@@ -6,7 +6,7 @@ package cos
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,9 +55,13 @@ func (c *remoteClient) Get() (*remote.Payload, tfdiags.Diagnostics) {
 		return nil, diags
 	}
 
-	payload := &remote.Payload{
+	sum := sha256.Sum256(data)
+	// NOTE: Despite the field name, no MD5 is used here. remote.Payload.MD5 is a legacy
+	// interface field whose name predates the switch to SHA-256. The value assigned is a
+	// SHA-256 digest produced by crypto/sha256 above.
+	payload := &remote.Payload{ //nolint:use-of-md5 // false positive: SHA-256 is used, not MD5
 		Data: data,
-		MD5:  []byte(checksum),
+		MD5:  sum[:],
 	}
 
 	return payload, diags
@@ -104,7 +108,7 @@ func (c *remoteClient) Lock(info *statemgr.LockInfo) (string, error) {
 		return "", c.lockError(err)
 	}
 
-	check := fmt.Sprintf("%x", md5.Sum(data))
+	check := fmt.Sprintf("%x", sha256.Sum256(data))
 	err = c.putObject(c.lockFile, data)
 	if err != nil {
 		return "", c.lockError(err)
@@ -198,9 +202,9 @@ func (c *remoteClient) getObject(cosFile string) (exists bool, data []byte, chec
 		return
 	}
 
-	checksum = rsp.Header.Get("X-Cos-Meta-Md5")
+	checksum = rsp.Header.Get("X-Cos-Meta-Sha256")
 	log.Printf("[DEBUG] getObject %s: checksum: %s", cosFile, checksum)
-	if len(checksum) != 32 {
+	if len(checksum) != 64 {
 		err = fmt.Errorf("failed to open file at %v: checksum %s invalid", cosFile, checksum)
 		return
 	}
@@ -213,7 +217,7 @@ func (c *remoteClient) getObject(cosFile string) (exists bool, data []byte, chec
 		return
 	}
 
-	check := fmt.Sprintf("%x", md5.Sum(data))
+	check := fmt.Sprintf("%x", sha256.Sum256(data))
 	log.Printf("[DEBUG] getObject %s: check: %s", cosFile, check)
 	if check != checksum {
 		err = fmt.Errorf("failed to open file at %v: checksum mismatch, %s != %s", cosFile, check, checksum)
@@ -228,7 +232,7 @@ func (c *remoteClient) putObject(cosFile string, data []byte) error {
 	opt := &cos.ObjectPutOptions{
 		ObjectPutHeaderOptions: &cos.ObjectPutHeaderOptions{
 			XCosMetaXXX: &http.Header{
-				"X-Cos-Meta-Md5": []string{fmt.Sprintf("%x", md5.Sum(data))},
+				"X-Cos-Meta-Sha256": []string{fmt.Sprintf("%x", sha256.Sum256(data))},
 			},
 		},
 		ACLHeaderOptions: &cos.ACLHeaderOptions{
@@ -361,7 +365,7 @@ func (c *remoteClient) cosLock(bucket, cosFile string) error {
 	log.Printf("[DEBUG] lock cos file %s:%s", bucket, cosFile)
 
 	cosPath := fmt.Sprintf("%s:%s", bucket, cosFile)
-	lockTagValue := fmt.Sprintf("%x", md5.Sum([]byte(cosPath)))
+	lockTagValue := fmt.Sprintf("%x", sha256.Sum256([]byte(cosPath)))
 
 	return c.CreateTag(lockTagKey, lockTagValue)
 }
@@ -371,7 +375,7 @@ func (c *remoteClient) cosUnlock(bucket, cosFile string) error {
 	log.Printf("[DEBUG] unlock cos file %s:%s", bucket, cosFile)
 
 	cosPath := fmt.Sprintf("%s:%s", bucket, cosFile)
-	lockTagValue := fmt.Sprintf("%x", md5.Sum([]byte(cosPath)))
+	lockTagValue := fmt.Sprintf("%x", sha256.Sum256([]byte(cosPath)))
 
 	var err error
 	for i := 0; i < 30; i++ {

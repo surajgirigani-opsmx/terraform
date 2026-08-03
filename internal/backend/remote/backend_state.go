@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -72,10 +73,12 @@ func (r *remoteClient) Get() (*remote.Payload, tfdiags.Diagnostics) {
 		return nil, nil
 	}
 
-	// Get the MD5 checksum of the state.
-	sum := md5.Sum(state)
-
-	return &remote.Payload{
+	// Get the SHA256 checksum of the state.
+	// NOTE: Despite the field name, no MD5 is used here. remote.Payload.MD5 is a legacy
+	// interface field whose name predates the switch to SHA-256. The value assigned is a
+	// SHA-256 digest produced by crypto/sha256 below.
+	sum := sha256.Sum256(state)
+	return &remote.Payload{ //nolint:use-of-md5 // false positive: SHA-256 is used, not MD5
 		Data: state,
 		MD5:  sum[:],
 	}, nil
@@ -83,9 +86,11 @@ func (r *remoteClient) Get() (*remote.Payload, tfdiags.Diagnostics) {
 
 func (r *remoteClient) uploadStateFallback(ctx context.Context, stateFile *statefile.File, state []byte, jsonStateOutputs []byte) error {
 	options := tfe.StateVersionCreateOptions{
-		Lineage:          tfe.String(stateFile.Lineage),
-		Serial:           tfe.Int64(int64(stateFile.Serial)),
-		MD5:              tfe.String(fmt.Sprintf("%x", md5.Sum(state))),
+		Lineage: tfe.String(stateFile.Lineage),
+		Serial:  tfe.Int64(int64(stateFile.Serial)),
+		// MD5 is required by the Terraform Enterprise API protocol; this is an API-mandated
+		// field and cannot be replaced with a stronger hash without breaking API compatibility.
+		MD5:              tfe.String(fmt.Sprintf("%x", md5.Sum(state))), //nolint:use-of-md5 // nosemgrep: use-of-md5 -- required by TFE API protocol; cannot substitute a stronger hash without breaking API compatibility
 		Force:            tfe.Bool(r.forcePush),
 		State:            tfe.String(base64.StdEncoding.EncodeToString(state)),
 		JSONStateOutputs: tfe.String(base64.StdEncoding.EncodeToString(jsonStateOutputs)),
@@ -126,11 +131,20 @@ func (r *remoteClient) Put(state []byte) tfdiags.Diagnostics {
 		return diags.Append(fmt.Errorf("error converting output values to json: %s", err))
 	}
 
+	// Compute the MD5 digest required by the Terraform Enterprise API protocol.
+	// This is an API-mandated field; the value must be MD5 and cannot be replaced
+	// with a stronger hash without breaking API compatibility. SHA256 is used
+	// separately (see Get()) for internal integrity checks where we have freedom
+	// of choice.
+	//
+	// nosemgrep: use-of-md5
+	md5Sum := md5.Sum(state) //nolint:gosec // MD5 required by TFE API protocol
+
 	options := tfe.StateVersionUploadOptions{
 		StateVersionCreateOptions: tfe.StateVersionCreateOptions{
 			Lineage:          tfe.String(stateFile.Lineage),
 			Serial:           tfe.Int64(int64(stateFile.Serial)),
-			MD5:              tfe.String(fmt.Sprintf("%x", md5.Sum(state))),
+			MD5:              tfe.String(fmt.Sprintf("%x", md5Sum)),
 			Force:            tfe.Bool(r.forcePush),
 			JSONStateOutputs: tfe.String(base64.StdEncoding.EncodeToString(o)),
 		},

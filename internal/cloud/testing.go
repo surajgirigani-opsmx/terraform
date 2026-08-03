@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -46,7 +47,7 @@ const (
 
 var (
 	tfeHost  = svchost.Hostname(defaultHostname)
-	credsSrc = auth.StaticCredentialsSource(map[svchost.Hostname]map[string]interface{}{
+	credsSrc = auth.StaticCredentialsSource(map[svchost.Hostname]map[string]string{
 		tfeHost: {"token": testCred},
 	})
 	testBackendSingleWorkspaceName = "app-prod"
@@ -204,38 +205,20 @@ func testBackendWithOutputs(t *testing.T) (*Cloud, func()) {
 		DetailedType: "string",
 	})
 
-	var dt interface{}
-	var val interface{}
-	err := json.Unmarshal([]byte(`["object", {"foo":"string"}]`), &dt)
-	if err != nil {
-		t.Fatalf("could not unmarshal detailed type: %s", err)
-	}
-	err = json.Unmarshal([]byte(`{"foo":"bar"}`), &val)
-	if err != nil {
-		t.Fatalf("could not unmarshal value: %s", err)
-	}
 	mc.StateVersionOutputs.create("svo-efgh", &tfe.StateVersionOutput{
 		ID:           "svo-efgh",
-		Value:        val,
+		Value:        json.RawMessage(`{"foo":"bar"}`),
 		Type:         "object",
 		Name:         "object_output",
-		DetailedType: dt,
+		DetailedType: json.RawMessage(`["object", {"foo":"string"}]`),
 	})
 
-	err = json.Unmarshal([]byte(`["list", "bool"]`), &dt)
-	if err != nil {
-		t.Fatalf("could not unmarshal detailed type: %s", err)
-	}
-	err = json.Unmarshal([]byte(`[true, false, true, true]`), &val)
-	if err != nil {
-		t.Fatalf("could not unmarshal value: %s", err)
-	}
 	mc.StateVersionOutputs.create("svo-ijkl", &tfe.StateVersionOutput{
 		ID:           "svo-ijkl",
-		Value:        val,
+		Value:        json.RawMessage(`[true, false, true, true]`),
 		Type:         "array",
 		Name:         "list_output",
-		DetailedType: dt,
+		DetailedType: json.RawMessage(`["list", "bool"]`),
 	})
 
 	b.client.StateVersionOutputs = mc.StateVersionOutputs
@@ -438,7 +421,8 @@ func testServerWithSnapshotsEnabled(t *testing.T, enabled bool) *httptest.Server
 			w.Header().Set("content-type", "application/json")
 			w.Header().Set("content-length", strconv.FormatInt(int64(len(respBody)), 10))
 			w.WriteHeader(http.StatusOK)
-			w.Write(respBody)
+			tmpl := template.Must(template.New("").Parse(string(respBody)))
+			tmpl.Execute(w, nil)
 			return
 		}
 
@@ -486,7 +470,8 @@ func testServerWithSnapshotsEnabled(t *testing.T, enabled bool) *httptest.Server
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write(fakeBodyRaw)
+		tmpl := template.Must(template.New("").Parse(string(fakeBodyRaw)))
+		tmpl.Execute(w, nil)
 	}))
 	serverURL = server.URL
 	return server
@@ -499,9 +484,10 @@ var testDefaultRequestHandlers = map[string]func(http.ResponseWriter, *http.Requ
 	// Respond to service discovery calls.
 	"/well-known/terraform.json": func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{
+		tmpl := template.Must(template.New("").Parse(`{
   "tfe.v2": "/api/v2/",
-}`)
+}`))
+		tmpl.Execute(w, nil)
 	},
 
 	// Respond to service version constraints calls.
@@ -524,7 +510,7 @@ var testDefaultRequestHandlers = map[string]func(http.ResponseWriter, *http.Requ
 	// Respond to the initial query to read the hashicorp org entitlements.
 	"/api/v2/organizations/hashicorp/entitlement-set": func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.api+json")
-		io.WriteString(w, `{
+		tmpl := template.Must(template.New("hashicorp-entitlement-set").Parse(`{
   "data": {
     "id": "org-GExadygjSbKP8hsY",
     "type": "entitlement-sets",
@@ -537,7 +523,8 @@ var testDefaultRequestHandlers = map[string]func(http.ResponseWriter, *http.Requ
       "vcs-integrations": true
     }
   }
-}`)
+}`))
+		tmpl.Execute(w, nil)
 	},
 
 	// Respond to the initial query to read the no-operations org entitlements.
@@ -601,7 +588,7 @@ func mockSROWorkspace(t *testing.T, b *Cloud, workspaceName string) {
 // testDisco returns a *disco.Disco mapping app.terraform.io and
 // localhost to a local test server.
 func testDisco(s *httptest.Server) *disco.Disco {
-	services := map[string]interface{}{
+	services := map[string]string{
 		"tfe.v2": fmt.Sprintf("%s/api/v2/", s.URL),
 	}
 	d := disco.NewWithCredentialsSource(credsSrc)

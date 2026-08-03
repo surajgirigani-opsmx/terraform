@@ -6,13 +6,15 @@ package command
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io/ioutil"
 	"log"
-	"math/rand"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -449,7 +451,14 @@ func (c *LoginCommand) interactiveGetTokenByCode(hostname svchost.Hostname, cred
 
 			resp.Header().Add("Content-Type", "text/html")
 			resp.WriteHeader(200)
-			resp.Write([]byte(callbackSuccessMessage))
+			tmpl, err := template.New("callback").Parse(callbackSuccessMessage)
+			if err != nil {
+				log.Printf("[ERROR] login: failed to parse callback success template: %s", err)
+				return
+			}
+			if err := tmpl.Execute(resp, nil); err != nil {
+				log.Printf("[ERROR] login: failed to render callback success template: %s", err)
+			}
 		}),
 	}
 	go func() {
@@ -735,7 +744,11 @@ func (c *LoginCommand) listenerForCallback(minPort, maxPort uint16) (net.Listene
 	maxTries := availCount + (availCount / 2)
 
 	for tries := 0; tries < maxTries; tries++ {
-		port := rand.Intn(availCount) + int(minPort)
+		randPort, err := rand.Int(rand.Reader, big.NewInt(int64(availCount)))
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to generate random port: %s", err)
+		}
+		port := int(randPort.Int64()) + int(minPort)
 		addr := fmt.Sprintf("127.0.0.1:%d", port)
 		log.Printf("[TRACE] login: trying %s as a listen address for temporary OAuth callback server", addr)
 		l, err := net.Listen("tcp4", addr)
@@ -764,7 +777,11 @@ func (c *LoginCommand) proofKey() (key, challenge string, err error) {
 		return "", "", err
 	}
 
-	key = fmt.Sprintf("%s.%09d", uu, rand.Intn(999999999))
+	randSuffix, err := rand.Int(rand.Reader, big.NewInt(999999999))
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate random proof key suffix: %s", err)
+	}
+	key = fmt.Sprintf("%s.%09d", uu, randSuffix.Int64())
 
 	h := sha256.New()
 	h.Write([]byte(key))
