@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"crypto/rand"
 	"os"
 	"os/user"
 	"strings"
@@ -19,8 +19,6 @@ import (
 	uuid "github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/terraform/version"
 )
-
-var rngSource = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 // Locker is the interface for state managers that are able to manage
 // mutual-exclusion locks for state.
@@ -143,11 +141,11 @@ type LockInfo struct {
 // NewLockInfo creates a LockInfo object and populates many of its fields
 // with suitable default values.
 func NewLockInfo() *LockInfo {
-	// this doesn't need to be cryptographically secure, just unique.
-	// Using math/rand alleviates the need to check handle the read error.
 	// Use a uuid format to match other IDs used throughout Terraform.
 	buf := make([]byte, 16)
-	rngSource.Read(buf)
+	if _, err := rand.Read(buf); err != nil {
+		panic(err)
+	}
 
 	id, err := uuid.FormatUUID(buf)
 	if err != nil {
