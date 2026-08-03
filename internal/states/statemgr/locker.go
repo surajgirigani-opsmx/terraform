@@ -13,7 +13,7 @@ import (
 	"os"
 	"os/user"
 	"strings"
-	"text/template"
+	"html/template"
 	"time"
 
 	uuid "github.com/hashicorp/go-uuid"
