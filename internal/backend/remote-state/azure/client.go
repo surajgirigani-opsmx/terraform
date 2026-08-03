@@ -55,7 +55,7 @@ func (c *RemoteClient) Get() (*remote.Payload, tfdiags.Diagnostics) {
 	ctx := newCtx()
 	blob, err := c.giovanniBlobClient.Get(ctx, c.containerName, c.keyName, options)
 	if err != nil {
-		if response.WasNotFound(blob.HttpResponse) {
+		if blob != nil && response.WasNotFound(blob.HttpResponse) {
 			return nil, nil
 		}
 		return nil, diags.Append(err)
@@ -107,7 +107,7 @@ func (c *RemoteClient) Put(data []byte) tfdiags.Diagnostics {
 
 	blob, err := c.giovanniBlobClient.GetProperties(ctx, c.containerName, c.keyName, getOptions)
 	if err != nil {
-		if !response.WasNotFound(blob.HttpResponse) {
+		if blob == nil || !response.WasNotFound(blob.HttpResponse) {
 			return diags.Append(err)
 		}
 	}
@@ -115,7 +115,9 @@ func (c *RemoteClient) Put(data []byte) tfdiags.Diagnostics {
 	contentType := "application/json"
 	putOptions.Content = &data
 	putOptions.ContentType = &contentType
-	putOptions.MetaData = blob.MetaData
+	if blob != nil {
+		putOptions.MetaData = blob.MetaData
+	}
 	_, err = c.giovanniBlobClient.PutBlockBlob(ctx, c.containerName, c.keyName, putOptions)
 
 	return diags.Append(err)
@@ -133,7 +135,7 @@ func (c *RemoteClient) Delete() tfdiags.Diagnostics {
 	ctx := newCtx()
 	resp, err := c.giovanniBlobClient.Delete(ctx, c.containerName, c.keyName, options)
 	if err != nil {
-		if !response.WasNotFound(resp.HttpResponse) {
+		if resp == nil || !response.WasNotFound(resp.HttpResponse) {
 			return diags.Append(err)
 		}
 	}
@@ -175,7 +177,7 @@ func (c *RemoteClient) Lock(info *statemgr.LockInfo) (string, error) {
 	properties, err := c.giovanniBlobClient.GetProperties(ctx, c.containerName, c.keyName, blobs.GetPropertiesInput{})
 	if err != nil {
 		// error if we had issues getting the blob
-		if !response.WasNotFound(properties.HttpResponse) {
+		if !response.WasNotFound(err) {
 			return "", getLockInfoErr(err)
 		}
 		// if we don't find the blob, we need to build it
@@ -189,11 +191,11 @@ func (c *RemoteClient) Lock(info *statemgr.LockInfo) (string, error) {
 		if err != nil {
 			return "", getLockInfoErr(err)
 		}
-	}
-
-	// if the blob is already locked then error
-	if properties.LeaseStatus == blobs.Locked {
-		return "", getLockInfoErr(fmt.Errorf("state blob is already locked"))
+	} else {
+		// if the blob is already locked then error
+		if properties.LeaseStatus == blobs.Locked {
+			return "", getLockInfoErr(fmt.Errorf("state blob is already locked"))
+		}
 	}
 
 	leaseID, err := c.giovanniBlobClient.AcquireLease(ctx, c.containerName, c.keyName, leaseOptions)

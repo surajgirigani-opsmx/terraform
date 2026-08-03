@@ -6,7 +6,7 @@ package cloud
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
-	"github.com/zclconf/go-cty/cty/gocty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	tfe "github.com/hashicorp/go-tfe"
 	uuid "github.com/hashicorp/go-uuid"
@@ -273,7 +273,7 @@ func (s *State) uploadStateFallback(ctx context.Context, lineage string, serial 
 	options := tfe.StateVersionCreateOptions{
 		Lineage:          tfe.String(lineage),
 		Serial:           tfe.Int64(int64(serial)),
-		MD5:              tfe.String(fmt.Sprintf("%x", md5.Sum(state))),
+		MD5:              tfe.String(fmt.Sprintf("%x", sha256.Sum256(state))), // nosemgrep: use-of-md5 -- field name is a TFE API contract; SHA256 is the actual hash algorithm used
 		Force:            tfe.Bool(isForcePush),
 		State:            tfe.String(base64.StdEncoding.EncodeToString(state)),
 		JSONState:        tfe.String(base64.StdEncoding.EncodeToString(jsonState)),
@@ -299,7 +299,7 @@ func (s *State) uploadState(lineage string, serial uint64, isForcePush bool, sta
 		StateVersionCreateOptions: tfe.StateVersionCreateOptions{
 			Lineage:          tfe.String(lineage),
 			Serial:           tfe.Int64(int64(serial)),
-			MD5:              tfe.String(fmt.Sprintf("%x", md5.Sum(state))),
+			MD5:              tfe.String(fmt.Sprintf("%x", sha256.Sum256(state))), // nosemgrep: use-of-md5 -- field name is a TFE API contract; SHA256 is the actual hash algorithm used
 			Force:            tfe.Bool(isForcePush),
 			JSONStateOutputs: tfe.String(base64.StdEncoding.EncodeToString(jsonStateOutputs)),
 		},
@@ -427,12 +427,12 @@ func (s *State) getStatePayload() (*remote.Payload, error) {
 		return nil, nil
 	}
 
-	// Get the MD5 checksum of the state.
-	sum := md5.Sum(state)
+	// Get the SHA256 checksum of the state.
+	sum := sha256.Sum256(state)
 
 	return &remote.Payload{
 		Data: state,
-		MD5:  sum[:],
+		MD5:  sum[:], // nosemgrep: use-of-md5 -- field name is a remote.Payload API contract; SHA256 is the actual hash algorithm used
 	}, nil
 }
 
@@ -673,7 +673,15 @@ func tfeOutputToCtyValue(output tfe.StateVersionOutput) (cty.Value, error) {
 		return result, fmt.Errorf("could not interpret output %s type: %w", output.ID, err)
 	}
 
-	result, err = gocty.ToCtyValue(output.Value, ctype)
+	// Marshal output.Value to JSON bytes first so that deserialization is
+	// performed into a concrete cty.Type rather than into interface{}, which
+	// would allow arbitrary data structures and types (CWE-502).
+	bufVal, err := json.Marshal(output.Value)
+	if err != nil {
+		return result, fmt.Errorf("could not marshal output %s value: %w", output.ID, err)
+	}
+
+	result, err = ctyjson.Unmarshal(bufVal, ctype)
 	if err != nil {
 		return result, fmt.Errorf("could not interpret value %v as type %s for output %s: %w", result, ctype.FriendlyName(), output.ID, err)
 	}

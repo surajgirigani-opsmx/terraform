@@ -84,14 +84,14 @@ type Backend struct {
 	// The fields below are set from configure
 	db         *sql.DB
 	connStr    string
-	schemaName string
+	schemaName string // raw schema name, used in parameterized queries
 }
 
 func (b *Backend) Configure(configVal cty.Value) tfdiags.Diagnostics {
 	data := backendbase.NewSDKLikeData(configVal)
 
 	b.connStr = data.String("conn_str")
-	b.schemaName = pq.QuoteIdentifier(data.String("schema_name"))
+	b.schemaName = data.String("schema_name")
 
 	db, err := sql.Open("postgres", b.connStr)
 	if err != nil {
@@ -99,13 +99,21 @@ func (b *Backend) Configure(configVal cty.Value) tfdiags.Diagnostics {
 	}
 
 	// Prepare database schema, tables, & indexes.
-	var query string
+	//
+	// Note: DDL statements (CREATE SCHEMA/TABLE/INDEX) do not support
+	// parameterized placeholders ($1, $2, …) for identifiers in PostgreSQL.
+	// The schema name is therefore embedded via fmt.Sprintf, but only after
+	// being sanitised with pq.QuoteIdentifier inline at each call site below,
+	// which prevents SQL injection by escaping and double-quoting the identifier.
+	// Data values continue to use parameterized queries.
 
 	if !data.Bool("skip_schema_creation") {
 		// list all schemas to see if it exists
 		var count int
-		query = `select count(1) from information_schema.schemata where schema_name = $1`
-		if err := db.QueryRow(query, data.String("schema_name")).Scan(&count); err != nil {
+		if err := db.QueryRow(
+			`SELECT count(1) FROM information_schema.schemata WHERE schema_name = $1`,
+			b.schemaName,
+		).Scan(&count); err != nil {
 			return backendbase.ErrorAsDiagnostics(err)
 		}
 
