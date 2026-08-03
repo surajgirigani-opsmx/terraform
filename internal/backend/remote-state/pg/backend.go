@@ -122,14 +122,8 @@ func (b *Backend) Configure(configVal cty.Value) tfdiags.Diagnostics {
 		// a user hasn't been granted the `CREATE SCHEMA` privilege
 		if count < 1 {
 			// tries to create the schema
-			query = `CREATE SCHEMA IF NOT EXISTS ` + b.schemaName
-			stmt, err := db.Prepare(query)
-			if err != nil {
-				return backendbase.ErrorAsDiagnostics(err)
-			}
-			_, err = stmt.Exec()
-			stmt.Close()
-			if err != nil {
+			query = `CREATE SCHEMA IF NOT EXISTS ` + pq.QuoteIdentifier(data.String("schema_name"))
+			if _, err := db.Exec(query); err != nil {
 				return backendbase.ErrorAsDiagnostics(err)
 			}
 		}
@@ -140,31 +134,19 @@ func (b *Backend) Configure(configVal cty.Value) tfdiags.Diagnostics {
 			return backendbase.ErrorAsDiagnostics(err)
 		}
 
-		query = `CREATE TABLE IF NOT EXISTS ` + b.schemaName + `.` + pq.QuoteIdentifier(statesTableName) + ` (
+		query = `CREATE TABLE IF NOT EXISTS ` + pq.QuoteIdentifier(data.String("schema_name")) + `.` + pq.QuoteIdentifier(statesTableName) + ` (
 			id bigint NOT NULL DEFAULT nextval('public.global_states_id_seq') PRIMARY KEY,
 			name text UNIQUE,
 			data text
 			)`
-		stmt, err := db.Prepare(query)
-		if err != nil {
-			return backendbase.ErrorAsDiagnostics(err)
-		}
-		_, err = stmt.Exec()
-		stmt.Close()
-		if err != nil {
+		if _, err := db.Exec(query); err != nil {
 			return backendbase.ErrorAsDiagnostics(err)
 		}
 	}
 
 	if !data.Bool("skip_index_creation") {
-		query = `CREATE UNIQUE INDEX IF NOT EXISTS ` + pq.QuoteIdentifier(statesIndexName) + ` ON ` + b.schemaName + `.` + pq.QuoteIdentifier(statesTableName) + ` (name)`
-		stmt, err := db.Prepare(query)
-		if err != nil {
-			return backendbase.ErrorAsDiagnostics(err)
-		}
-		_, err = stmt.Exec()
-		stmt.Close()
-		if err != nil {
+		query = `CREATE UNIQUE INDEX IF NOT EXISTS ` + pq.QuoteIdentifier(statesIndexName) + ` ON ` + pq.QuoteIdentifier(data.String("schema_name")) + `.` + pq.QuoteIdentifier(statesTableName) + ` (name)`
+		if _, err := db.Exec(query); err != nil {
 			return backendbase.ErrorAsDiagnostics(err)
 		}
 	}
